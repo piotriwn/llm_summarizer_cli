@@ -6,8 +6,11 @@ from bs4 import BeautifulSoup
 import selenium
 from selenium import webdriver
 import time
-from openai import OpenAI
-import argparse  # Added import for argparse
+from openai import AsyncOpenAI
+import argparse
+import asyncio
+import aiohttp
+import logging
 
 IRRELEVANT_TAGS = [
     "script",
@@ -31,6 +34,12 @@ The contents of this website is as follows;
 please provide a short summary of this website in markdown.
 If it includes news or announcements, then summarize these too
 """
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
 
 
 class Website:
@@ -62,20 +71,29 @@ class Website:
         self.text = text
         return {"title": title, "text": text}
 
-    def scrape_using_requests(self) -> Dict[str, str]:
-        response = requests.get(self.url)
-        response.raise_for_status()  # Raises HTTPError, if one occurred.
-        return self.__beautify(response.content)  # Content of the response, in bytes.
+    async def scrape_using_requests(self) -> Dict[str, str]:
+        logging.info(f"Starting to scrape {self.url} using requests")
+        async with aiohttp.ClientSession() as session:
+            async with session.get(self.url) as response:
+                content = await response.read()
+                logging.info(f"Finished scraping {self.url} using requests")
+                return self.__beautify(content)
 
-    def scrape_using_selenium(self) -> Dict[str, str]:
-        # Set Chrome options for headless mode
+    async def scrape_using_selenium(self) -> Dict[str, str]:
+        logging.info(f"Starting to scrape {self.url} using selenium")
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, self._scrape_using_selenium_sync)
+        logging.info(f"Finished scraping {self.url} using selenium")
+        return result
+
+    def _scrape_using_selenium_sync(self) -> Dict[str, str]:
         options = selenium.webdriver.chrome.options.Options()
-        options.add_argument("--headless")  # Run without opening a window
-        options.add_argument("--disable-gpu")  # Required for some headless environments
-        options.add_argument("--window-size=1920x1080")  # Ensures full page rendering
-        options.add_argument("--no-sandbox")  # Bypass OS security model
-        options.add_argument("--disable-dev-shm-usage")  # Prevents memory issues
-        options.binary_location = self.chrome_binary_path  # Path to Chrome binary
+        options.add_argument("--headless")
+        options.add_argument("--disable-gpu")
+        options.add_argument("--window-size=1920x1080")
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+        options.binary_location = self.chrome_binary_path
 
         service = selenium.webdriver.chrome.service.Service(self.chromedriver_path)
         driver = webdriver.Chrome(service=service, options=options)
@@ -87,7 +105,7 @@ class Website:
 
         return self.__beautify(page_bytes)
 
-    def summarize(self) -> str:
+    async def summarize(self) -> str:
         def generate_prompt(
             webpage_text: str, webpage_title: str
         ) -> List[Dict[str, str]]:
@@ -99,23 +117,24 @@ class Website:
                 },
             ]
 
-        openai = OpenAI()
-        response = openai.chat.completions.create(
+        openai = AsyncOpenAI()
+        logging.info(f"Starting to summarize {self.url}")
+        response = await openai.chat.completions.create(
             model=self.model,
             messages=generate_prompt(self.title, self.text),
         )
         self.summarized = response.choices[0].message.content
+        logging.info(f"Finished summarizing {self.url}")
         return response.choices[0].message.content
 
-    def scrape_and_summarize(self, scrape_method: str) -> None:
+    async def scrape_and_summarize(self, scrape_method: str) -> str:
         if scrape_method == "requests":
-            self.scrape_using_requests()
+            await self.scrape_using_requests()
         elif scrape_method == "selenium":
-            self.scrape_using_selenium()
+            await self.scrape_using_selenium()
         else:
             raise ValueError("Invalid scrape method")
-        self.summarize()
-        return
+        return await self.summarize()
 
 
 def parse_arguments() -> argparse.Namespace:
@@ -150,17 +169,24 @@ def parse_arguments() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def main() -> None:
+async def main() -> None:
     load_dotenv()
     os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
 
     args = parse_arguments()
 
+    tasks = []
     for url in args.urls:
         wb = Website(url, args.chromedriver_path, args.chrome_binary_path, args.model)
-        wb.scrape_and_summarize(args.scrape_method)
-        print(f"Summary for {wb.url}:\n{wb.summarized}\n")
+        tasks.append(wb.scrape_and_summarize(args.scrape_method))
+
+    results = await asyncio.gather(*tasks)
+
+    print("\n" + "-" * 80 + "\n")
+    for url, summary in zip(args.urls, results):
+        print(f"Summary for {url}:\n{summary}\n")
+        print("\n" + "-" * 80 + "\n")
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

@@ -4,3 +4,6 @@ cselenium
 bs4
 python-dotenv
 openai
+argparse
+asyncio
+aiohttp
