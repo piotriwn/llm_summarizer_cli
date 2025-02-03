@@ -1,0 +1,6 @@
+typing
+requests
+cselenium
+bs4
+python-dotenv
+openai
