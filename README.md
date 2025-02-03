@@ -34,7 +34,13 @@ python3 -m pip install -r requirements.txt
 Use `python -h` to check the arguments, an example is:
 
 ```
-python main.py bbc.com --model gpt-4
+python main.py bbc.com www.cnn.com https://wikipedia.org http://reddit.com  --model gpt-4o
+```
+
+To run using local llama3.2:
+
+```
+python main.py bbc.com --model llama3.2 --use-local-endpoint
 ```
 
 

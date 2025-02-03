@@ -23,6 +23,7 @@ IRRELEVANT_TAGS = [
     "[document]",
 ]
 
+LOCAL_ENDPOINT_OLLAMA = "http://localhost:11434/v1"
 SYSTEM_PROMPT = """
 You are an assistant that analyzes the contents of a website
 and provides a short summary, ignoring text that might be navigation related.
@@ -50,7 +51,12 @@ class Website:
         return url
 
     def __init__(
-        self, url: str, chromedriver_path: str, chrome_binary_path: str, model: str
+        self,
+        url: str,
+        chromedriver_path: str,
+        chrome_binary_path: str,
+        model: str,
+        use_local_endpoint: bool,
     ) -> None:
         self.url = Website.ensure_http_format(url)
 
@@ -60,6 +66,7 @@ class Website:
         self.chromedriver_path = chromedriver_path
         self.chrome_binary_path = chrome_binary_path
         self.model = model
+        self.use_local_endpoint = use_local_endpoint
 
     def __beautify(self, page_source: Union[str, bytes]) -> Dict[str, str]:
         soup = BeautifulSoup(page_source, "html.parser")
@@ -117,7 +124,11 @@ class Website:
                 },
             ]
 
-        openai = AsyncOpenAI()
+        if self.use_local_endpoint:
+            openai = AsyncOpenAI(base_url=LOCAL_ENDPOINT_OLLAMA, api_key="ollama")
+        else:
+            openai = AsyncOpenAI()
+
         logging.info(f"Starting to summarize {self.url}")
         response = await openai.chat.completions.create(
             model=self.model,
@@ -166,6 +177,11 @@ def parse_arguments() -> argparse.Namespace:
         default="gpt-4o-mini",
         help="model to use for summarization",
     )
+    parser.add_argument(
+        "--use-local-endpoint",
+        action="store_true",
+        help="whether to use local ollama endpoint",
+    )
     return parser.parse_args()
 
 
@@ -177,7 +193,13 @@ async def main() -> None:
 
     tasks = []
     for url in args.urls:
-        wb = Website(url, args.chromedriver_path, args.chrome_binary_path, args.model)
+        wb = Website(
+            url,
+            args.chromedriver_path,
+            args.chrome_binary_path,
+            args.model,
+            args.use_local_endpoint,
+        )
         tasks.append(wb.scrape_and_summarize(args.scrape_method))
 
     results = await asyncio.gather(*tasks)
